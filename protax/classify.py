@@ -82,14 +82,15 @@ def classify_file(qdir, par_dir, tax_dir, verbose=False):
         curr = f.readline().strip('\n')
         curr = curr.replace('|', '\t').split('\t')
         seqs = f.readline().strip('\n')
-        q, ok = read_query(seqs)
 
+        if not seqs:
+            break  # EOF
+
+        q, ok = read_query(seqs)
         validate_taxonomy_query(tree, q, ok)
 
         curr_name = ''.join(curr[1:])
-        if not seqs:
-            break  # EOF
-            
+        
         start = time.time()
         probs = get_probs(q, ok, tree, params, segnum, N).block_until_ready()
         end = time.time()
@@ -120,7 +121,7 @@ def classify(q, ok, tree, params, segnum, N):
 
 
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
 
     # protax_args = sys.argv
     # if len(protax_args) < 4:
@@ -130,7 +131,6 @@ if __name__ == "__main__":
 
     # testing for now
     
-    query_dir = r"FinPROTAX/FinPROTAX/modelCOIfull/refs.aln"
-    classify_file(query_dir, "models/params/model.npz", "models/ref_db/taxonomy37k.npz") 
-    compute_perplexity(query_dir, "models/params/model.npz", "models/ref_db/taxonomy37k.npz")
-
+    # query_dir = r"FinPROTAX/FinPROTAX/modelCOIfull/refs.aln"
+    # classify_file(query_dir, "models/params/model.npz", "models/ref_db/taxonomy37k.npz") 
+    # compute_perplexity(query_dir, "models/params/model.npz", "models/ref_db/taxonomy37k.npz")
