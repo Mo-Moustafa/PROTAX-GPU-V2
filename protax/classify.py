@@ -77,6 +77,7 @@ def classify_file(qdir, par_dir, tax_dir, verbose=False):
 
     tot_time = 0
     res = []
+    final_probs = []  # Store final probabilities
 
     while True:
         curr = f.readline().strip('\n')
@@ -97,11 +98,12 @@ def classify_file(qdir, par_dir, tax_dir, verbose=False):
 
         probs = jnp.take(probs, tree.paths, fill_value=-1)
 
-
         # TODO argmax at leaf level?
         classified_layer = jnp.argmax(probs, axis=0)
         res.append(classified_layer)
 
+        classified_prob = jnp.max(probs, axis=0)[-1]
+        final_probs.append(classified_prob)
     
         if verbose:
             pass
@@ -111,6 +113,7 @@ def classify_file(qdir, par_dir, tax_dir, verbose=False):
 
     # saving results
     df = pd.DataFrame(np.array(res))
+    df['final_prob'] = final_probs
     df.to_csv("pyprotax_results.csv")
     print(f"finished in {tot_time}s")
 
