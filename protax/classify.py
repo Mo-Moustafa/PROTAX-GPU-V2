@@ -119,8 +119,8 @@ def classify_file(qdir, par_dir, tax_dir, verbose=False):
 
 
 
-def classify(q, ok, tree, params, segnum, N):
-    pass
+# def classify(q, ok, tree, params, segnum, N):
+#     pass
 
 
 

@@ -126,7 +126,7 @@ def read_refs(ref_dir):
             break  # EOF
         ref_list.append(np.packbits(seq_bits[:4], axis=None))
         ok_pos.append(np.packbits(seq_bits[4], axis=None))
-        print('\r' + str(i), end='\n')
+        # print('\r' + str(i), end='\n')
         i += 1
     return np.array(ref_list), np.array(ok_pos)
 

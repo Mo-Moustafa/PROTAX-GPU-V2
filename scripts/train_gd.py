@@ -17,6 +17,9 @@ import matplotlib.pyplot as plt
 from functools import partial
 import argparse
 
+from tqdm import tqdm
+import sys
+
 
 def CE_loss(log_probs, y_ind):
     """
@@ -118,13 +121,20 @@ def train(train_config, train_dir, targ_dir):
     )
     targ = get_targ(targ_dir)
     seq_list, ok_list = protax_utils.read_refs(train_dir)
+    print("Read reference sequences successfully")
+
     node_state = np.expand_dims(np.array(tree.node_state)[:, 0], 1)
+    print("Read node state successfully")
 
     # params and node lvl
     _, lvl, sc = load_params("models/params/model.npz", "models/ref_db/taxonomy37k.npz")
-    loss_hist = []
+    epoch_loss_hist = []
+
+    print("Training model...")
+    start_time = time.time()
+
     for e in range(train_config["num_epochs"]):
-        print(f"epoch {e}")
+        print(f"epoch {e+1} / {train_config['num_epochs']}")
 
         beta_grad = 0
         loss_sum = 0
@@ -134,15 +144,15 @@ def train(train_config, train_dir, targ_dir):
         random.shuffle(traversal)
 
         # minibatch
-        for i in traversal:
+        for i in tqdm(traversal, file=sys.stderr, dynamic_ncols=True, mininterval=5):
             # mask out tree
             q = seq_list[i]
             ok = ok_list[i]
 
-            # tree.node_state = mask_design_mat(tree, num_refs, targ, i)
-
             # masks out a node2seq column given reference index (~1.2 ms)
-            tree.node2seq, tree.node_state = mask_n2s(n2s, node_state, i)
+            new_node2seq, new_node_state = mask_n2s(n2s, node_state, i)     # Edited by Mohamed
+            tree = tree._replace(node2seq=new_node2seq, node_state=new_node_state)
+
             beta_grad += f_grad(
                 q,
                 ok,
@@ -171,21 +181,29 @@ def train(train_config, train_dir, targ_dir):
             if i % train_config["batch_size"] == 0:
                 beta = beta - lr * beta_grad
                 loss_sum += batch_loss
-                curr_loss = batch_loss / train_config["batch_size"]
-                print("batch_loss: ", curr_loss)
-                loss_hist.append(curr_loss)
                 batch_loss = 0
 
                 # grad norm
-                bflat = beta_grad.reshape(beta_grad.shape[0] * beta_grad.shape[1])
+                # bflat = beta_grad.reshape(beta_grad.shape[0] * beta_grad.shape[1])
 
-        print("loss: ", loss_sum / seq_list.shape[0])
+        epoch_loss = loss_sum / seq_list.shape[0]
+        epoch_loss_hist.append(epoch_loss)
+        print("total loss: ", epoch_loss)
 
         # save checkpoint
         mf = Path("models/params/m2.npz")
         np.savez_compressed(mf.resolve(), beta=np.array(beta), scalings=sc)
-    plt.plot(loss_hist)
-    plt.show()
+
+    plt.plot(epoch_loss_hist)
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training Loss")
+    plt.grid(True)
+    plt.savefig("loss_curve.png", dpi=300, bbox_inches="tight")
+    plt.close()
+
+    end_time = time.time()
+    print(f"Time taken to train: {end_time - start_time} seconds")
 
 
 if __name__ == "__main__":
