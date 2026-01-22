@@ -1,4 +1,5 @@
 from protax.classify import classify_file
+from scripts.calibration import evaluate
 import sys
 
 if __name__ == "__main__":
@@ -7,9 +8,9 @@ if __name__ == "__main__":
         print(
             "Usage: python scripts/process_seqs.py [PATH_TO_QUERY_SEQUENCES] [PATH_TO_PARAMETERS] [PATH_TO_TAXONOMY_FILE]"
         )
-
-    query_dir, model_dir, tax_dir = protax_args[1:4]
+    query_dir, model_dir, tax_dir = protax_args[1:4]    
     classify_file(query_dir, model_dir, tax_dir)
+    evaluate("pyprotax_results.csv", "models/ref_db/list_of_labels_nodeIDs.txt", "")
 
     # testing
     # query_dir = r"/home/roy/Documents/PROTAX-dsets/30k_small/refs.aln"
