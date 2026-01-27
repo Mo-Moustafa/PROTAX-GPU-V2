@@ -63,7 +63,7 @@ def validate_taxonomy_query(tree, query, ok_query):
         raise ValueError(f"Mismatch in valid positions: "
                          f"taxonomy={tree.ok_pos.shape[1]} vs query={ok_query.shape[0]}")
 
-def classify_file(qdir, par_dir, tax_dir, verbose=False):
+def classify_file(qdir, par_dir, tax_dir, model_id = "", verbose=False):
     """
     Process a batch of queries given a model and taxonomy directory
     """
@@ -114,7 +114,7 @@ def classify_file(qdir, par_dir, tax_dir, verbose=False):
     # saving results
     df = pd.DataFrame(np.array(res))
     df['final_prob'] = final_probs
-    df.to_csv("pyprotax_results.csv")
+    df.to_csv(f"pyprotax_results_{model_id}.csv")
     print(f"finished in {tot_time}s")
 
 

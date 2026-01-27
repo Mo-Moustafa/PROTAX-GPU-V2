@@ -20,6 +20,8 @@ import argparse
 from tqdm import tqdm
 import sys
 
+from scripts.calibration import evaluate
+from protax.classify import classify_file
 
 def CE_loss(log_probs, y_ind):
     """
@@ -33,16 +35,28 @@ def CE_loss(log_probs, y_ind):
     return -jnp.sum(jnp.take(log_probs, y_ind, axis=0))
 
 
-def forward(q, ok, tree, beta, sc_mean, sc_var, N, segnum, y_ind, lvl):
+def forward(query, ok, tree, beta, sc_mean, sc_var, N, segnum, y_ind, lvl, q_param, tree_prior, train_with_q):
     beta = jnp.take(beta, lvl, axis=0)
-    X = model.get_X(q, ok, tree, N, sc_mean, sc_var)
+    X = model.get_X(query, ok, tree, N, sc_mean, sc_var)
     log_probs = model.fill_log_bprob(X, beta, tree, segnum)
+
+    if train_with_q:
+        q = jax.nn.sigmoid(q_param)
+        species_prior = tree_prior[y_ind]
+        row_log_probs = log_probs[y_ind]
+        species_predicted = jnp.exp(row_log_probs[-1])
+
+        species_adjusted = (q * species_prior) + ((1 - q) * species_predicted)
+        species_adjusted_log = jnp.log(jnp.clip(species_adjusted, 1e-10, 1.0))
+
+        row_log_probs = row_log_probs.at[-1].set(species_adjusted_log)
+        log_probs = log_probs.at[y_ind].set(row_log_probs)
+
     return CE_loss(log_probs, y_ind)
 
-
-f_grad = jax.jit(jax.grad(forward, argnums=(3)), static_argnums=(6, 7))
-forward_jit = jax.jit(forward, static_argnums=(6, 7))
-
+f_grad_beta = jax.jit(jax.grad(forward, argnums=(3)), static_argnums=(6, 7, 12))
+f_grad_q = jax.jit(jax.grad(forward, argnums=(10)), static_argnums=(6, 7, 12))
+forward_jit = jax.jit(forward, static_argnums=(6, 7, 12))
 
 def get_targ(target_dir):
     """
@@ -107,14 +121,24 @@ def load_params(pdir, tdir):
     return beta, lvl, sc
 
 
-def train(train_config, train_dir, targ_dir):
+def train(train_config, train_dir, targ_dir, model_id = ""):
+
     tree, params, N, segnum = protax_utils.read_model_jax(
         "models/params/model.npz", "models/ref_db/taxonomy37k.npz"
     )
-    pkey = jax.random.PRNGKey(0)
-    lr = train_config["learning_rate"]
 
-    beta = jax.random.uniform(pkey, (7, 4))
+    pkey = jax.random.PRNGKey(0)
+    key_beta, key_q = jax.random.split(pkey)
+
+    sigma_beta = 10.0
+    sigma_q = 1.0
+    beta = jax.random.normal(key_beta, (7, 4)) * sigma_beta
+    q_param = jax.random.normal(key_q, ()) * sigma_q
+
+    lr = train_config["learning_rate"]
+    train_with_q = train_config["train_with_q"]
+    tree_prior = tree.prior
+
     n2s = sp.csr_matrix(
         (tree.node2seq.data, tree.node2seq.indices, tree.node2seq.indptr),
         shape=tree.node2seq.shape,
@@ -137,6 +161,7 @@ def train(train_config, train_dir, targ_dir):
         print(f"epoch {e+1} / {train_config['num_epochs']}")
 
         beta_grad = 0
+        q_grad = 0
         loss_sum = 0
         batch_loss = 0
 
@@ -146,15 +171,15 @@ def train(train_config, train_dir, targ_dir):
         # minibatch
         for i in tqdm(traversal, file=sys.stderr, dynamic_ncols=True, mininterval=5):
             # mask out tree
-            q = seq_list[i]
+            q_seq = seq_list[i]
             ok = ok_list[i]
 
             # masks out a node2seq column given reference index (~1.2 ms)
             new_node2seq, new_node_state = mask_n2s(n2s, node_state, i)     # Edited by Mohamed
             tree = tree._replace(node2seq=new_node2seq, node_state=new_node_state)
 
-            beta_grad += f_grad(
-                q,
+            beta_grad += f_grad_beta(
+                q_seq,
                 ok,
                 tree,
                 beta,
@@ -164,9 +189,30 @@ def train(train_config, train_dir, targ_dir):
                 segnum,
                 targ.at[i].get(),
                 lvl,
+                q_param, 
+                tree_prior,
+                train_with_q,
             )
+
+            if train_with_q:
+                q_grad += f_grad_q(
+                    q_seq,
+                    ok,
+                    tree,
+                    beta,
+                    params.sc_mean,
+                    params.sc_var,
+                    N,
+                    segnum,
+                    targ.at[i].get(),
+                    lvl,
+                    q_param, 
+                    tree_prior,
+                    train_with_q,
+                )
+
             batch_loss += forward_jit(
-                q,
+                q_seq,
                 ok,
                 tree,
                 beta,
@@ -176,30 +222,50 @@ def train(train_config, train_dir, targ_dir):
                 segnum,
                 targ.at[i].get(),
                 lvl,
+                q_param, 
+                tree_prior,
+                train_with_q,
             )
+
 
             if i % train_config["batch_size"] == 0:
                 beta = beta - lr * beta_grad
+                beta_grad = 0
+
+                if train_with_q:
+                    # q_grad = jnp.clip(q_grad, -1.0, 1.0)  # Clip to prevent vanishing gradients
+                    q_param = q_param - (lr * 5 * q_grad)
+                    q_grad = 0
+
                 loss_sum += batch_loss
                 batch_loss = 0
 
                 # grad norm
-                # bflat = beta_grad.reshape(beta_grad.shape[0] * beta_grad.shape[1])
+                # bflat = beta_grad.reshape(beta_grad.shape[0] * beta_grad.shape[1])    # Edited by Mohamed
+
+        if train_with_q:
+            print("q_percentage: ", jax.nn.sigmoid(q_param).item())
 
         epoch_loss = loss_sum / seq_list.shape[0]
         epoch_loss_hist.append(epoch_loss)
         print("total loss: ", epoch_loss)
 
         # save checkpoint
-        mf = Path("models/params/m2.npz")
+        mf = Path(f"models/params/model_{model_id}.npz")
         np.savez_compressed(mf.resolve(), beta=np.array(beta), scalings=sc)
+
+        if train_config["evaluate_during_training"]:
+            if e % 3 == 0:
+                classify_file("models/ref_db/refs.aln", f"models/params/model_{model_id}.npz", "models/ref_db/taxonomy37k.npz", e)
+                evaluate(f"training_results_{e}.csv", "models/ref_db/list_of_labels_nodeIDs.txt", e)
+
 
     plt.plot(epoch_loss_hist)
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
     plt.title("Training Loss")
     plt.grid(True)
-    plt.savefig("loss_curve.png", dpi=300, bbox_inches="tight")
+    plt.savefig(f"loss_curve_{model_id}.png", dpi=300, bbox_inches="tight")
     plt.close()
 
     end_time = time.time()
@@ -211,18 +277,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a model")
     parser.add_argument("--train_dir", type=str, help="Path to training data")
     parser.add_argument("--targ_dir", type=str, help="Path to target data")
+    parser.add_argument("--model_id", type=str, help="Model identifier")
     args = parser.parse_args()
     train_dir = Path(args.train_dir)
     targ_dir = Path(args.targ_dir)
-
-    # train_dir = r"/home/roy/Documents/PROTAX-dsets/30k_small/refs.aln"
-    # targ_dir = "/home/roy/Documents/PROTAX-dsets/30k_small/30k-targets.csv"
+    model_id = args.model_id
 
     # training config
     tc = {
-        "learning_rate": 0.001,
+        "learning_rate": 0.03,
         "batch_size": 500,
         "num_epochs": 30,
+        "train_with_q": True,
+        "evaluate_during_training": False,
     }
 
-    train(tc, train_dir, targ_dir)  # train the model
+    train(tc, train_dir, targ_dir, model_id)  # train the model

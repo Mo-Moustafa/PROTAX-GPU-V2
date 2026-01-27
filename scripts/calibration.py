@@ -24,7 +24,7 @@ def read_labels(labels_path):
     return labels_list
 
 
-def plot_cumulative(list_of_results, accuracies, model_name):
+def plot_cumulative(list_of_results, accuracies, model_id):
 
     plt.figure(figsize=(8, 6))
     plt.plot([0, 100], [0, 100],  label="Ideal Calibration", color='gray')
@@ -51,10 +51,10 @@ def plot_cumulative(list_of_results, accuracies, model_name):
 
     plt.xlabel("Cumulative Probability")
     plt.ylabel("Cumulative Correct")
-    plt.title(f"PROTAX-GPU {model_name}\n Accuracy={np.mean(accuracies)}%")
+    plt.title(f"PROTAX-GPU {model_id}\n Accuracy={np.mean(accuracies)}%")
     plt.legend()
     plt.grid(True)
-    plt.savefig(f"{model_name}_Calibration.png")
+    plt.savefig(f"{model_id}_Calibration.png")
     plt.close()
 
     return
@@ -82,7 +82,7 @@ def calculate_correctness(predictions_list, probs_list, labels_list):
   return results, accuracy
 
 
-def evaluate(predictions_path, labels_path, model_name):
+def evaluate(predictions_path, labels_path, model_id):
 
     predictions_list, probs_list = get_species_predictions(predictions_path)  
     labels_list = read_labels(labels_path)
@@ -90,7 +90,7 @@ def evaluate(predictions_path, labels_path, model_name):
 
     results, accuracy = calculate_correctness(predictions_list, probs_list, labels_list)
 
-    plot_cumulative([results], [accuracy], model_name)
+    plot_cumulative([results], [accuracy], model_id)
 
     return
 
